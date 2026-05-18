@@ -36,7 +36,11 @@ def run_git(args, cwd):
 
 
 def all_tracked_files(repo_path):
-    """Return every filename (basename) that git has ever tracked, deduplicated."""
+    """
+    Return every file path (relative to repo root) that git has ever tracked.
+    Files are mirrored into the repo as e.g. FlyingProbePrograms/BoardA/dummy123.job
+    so the repo itself contains the full folder structure.
+    """
     code, out, _ = run_git(
         ["log", "--all", "--diff-filter=A", "--name-only", "--format="],
         cwd=repo_path,
@@ -49,7 +53,7 @@ def all_tracked_files(repo_path):
         if line:
             name = Path(line).name.lower()
             if name not in seen:
-                seen[name] = line  # keep the full relative path
+                seen[name] = line
     return sorted(seen.values(), key=lambda p: Path(p).name.lower())
 
 

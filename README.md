@@ -1,6 +1,6 @@
 # Flying Probe Backup Agent
 
-Watches your Flying Probe programs folder for changes, commits every save to a local git repository, and pushes to GitHub when the network is available. If someone overwrites a file by mistake, you can recover any previous version without touching the current programs.
+Watches your Flying Probe programs folder for changes, mirrors every file into a local git repository, and pushes to GitHub when the network is available. If someone overwrites a file by mistake, you can recover any previous version without touching the current programs.
 
 ---
 
@@ -12,16 +12,39 @@ Someone saves dummy123.job
 backup_agent.py sees the change, waits 10 seconds
 (batches rapid saves into one commit)
         ↓
+Copies dummy123.job into the backup repo (mirrored folder structure)
+        ↓
 git commit — "Auto-backup 2024-03-15 09:32
               Changed files:
-                - dummy123.job"
+                - FlyingProbePrograms/dummy123.job"
         ↓
 Internet available?
   YES → push to GitHub immediately
   NO  → save locally, retry every 5 minutes
 ```
 
-The programs folder is **never modified** — the agent only reads it and stores history in the backup repo.
+The programs folder is **never modified** — the agent copies files out of it into a separate backup repo.
+
+On first startup the agent takes a **full snapshot** of every existing file in the watched folders, so nothing is missed even before the first change.
+
+---
+
+## What gets pushed to GitHub
+
+The full contents of every file are stored in the repo — not just diffs. GitHub holds a complete copy of your programs at every point in time. The folder structure is mirrored inside the repo:
+
+```
+C:\FlyingProbeBackup\
+  FlyingProbePrograms\        ← mirror of C:\FlyingProbePrograms
+    BoardA\
+      dummy123.job
+      boardXYZ.job
+  FlyingProbeData\            ← mirror of C:\FlyingProbeData (if configured)
+    fixtures\
+      fixture001.xml
+```
+
+You can back up as many folders as you like — just add them to `watch_paths` in `config.json`.
 
 ---
 
@@ -29,10 +52,11 @@ The programs folder is **never modified** — the agent only reads it and stores
 
 ### `backup_agent.py` — runs silently in the background 24/7
 
-- Watches your programs folder for any file saves or new files
-- Waits 10 seconds after a change (to batch rapid saves into one commit)
-- Commits only the files that actually changed, with a message listing each one
-- Pushes to GitHub if internet is available, otherwise saves locally and retries
+- On startup: takes a full snapshot of all files in all watched folders
+- Watches for any file saves or new files
+- Waits 10 seconds after a change (batches rapid saves into one commit)
+- Copies changed files into the backup repo, commits with a message listing each one
+- Pushes to GitHub if internet is available, otherwise saves locally and retries every 5 minutes
 
 ### `recover.py` — run this only when you need to recover something
 
@@ -48,8 +72,9 @@ The programs folder is **never modified** — the agent only reads it and stores
 
 | Folder | What it is |
 |---|---|
-| `C:\FlyingProbePrograms\` | Your actual work — the agent watches this |
-| `C:\FlyingProbeBackup\` | The git vault — full history of every backed up file |
+| `C:\FlyingProbePrograms\` | Your actual work — agent watches and copies from here |
+| `C:\FlyingProbeData\` | Supporting data folder — add to watch_paths to back up |
+| `C:\FlyingProbeBackup\` | The git vault — full mirrored copy + complete history |
 | `C:\FlyingProbeRecovered\` | Recovered files land here — safe to delete anytime |
 | `C:\BackupAgent\` | The scripts: backup_agent.py, recover.py, config.json |
 
@@ -63,7 +88,7 @@ The programs folder is **never modified** — the agent only reads it and stores
 Each commit only contains the files that actually changed, not the entire folder:
 
 ```
-Commit #1  →  dummy123.job + boardXYZ.job + testABC.job   (all new)
+Commit #1  →  dummy123.job + boardXYZ.job + testABC.job   (initial snapshot)
 Commit #2  →  boardXYZ.job                                (only this changed)
 Commit #3  →  dummy123.job                                (only this changed — broken)
 Commit #4  →  testABC.job                                 (only this changed)
@@ -112,10 +137,12 @@ Use default options.
 
 ```json
 "repo_path":          "C:/FlyingProbeBackup",
-"watch_paths":        ["C:/FlyingProbePrograms"],
+"watch_paths":        ["C:/FlyingProbePrograms", "C:/FlyingProbeData"],
 "github_remote_url":  "https://github.com/YOUR_USERNAME/YOUR_REPO.git",
 "recovered_path":     "C:/FlyingProbeRecovered"
 ```
+
+Add as many folders to `watch_paths` as you need.
 
 **5. Create a private GitHub repo** and paste its URL into `github_remote_url`
 
@@ -134,8 +161,8 @@ The first push will prompt for your GitHub login — after that it remembers.
 
 | Key | What it does |
 |---|---|
-| `repo_path` | Where git stores the backup history |
-| `watch_paths` | Folder(s) to watch for changes |
+| `repo_path` | Where git stores the mirrored files and history |
+| `watch_paths` | Folder(s) to watch — all are mirrored into the repo |
 | `file_extensions` | Only back up files with these extensions |
 | `debounce_seconds` | How long to wait after a save before committing (default: 10) |
 | `github_remote_url` | Your GitHub repo URL |
