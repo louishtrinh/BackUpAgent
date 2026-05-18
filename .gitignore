@@ -5,3 +5,5 @@ __pycache__/
 start_agent.bat
 start_agent_hidden.bat
 remove_startup.bat
+dist/
+build/

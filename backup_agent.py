@@ -18,7 +18,16 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 
-def load_config(config_path="config.json"):
+def get_base_dir():
+    """Return the folder containing the exe (frozen) or the script (dev)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def load_config(config_path=None):
+    if config_path is None:
+        config_path = os.path.join(get_base_dir(), "config.json")
     with open(config_path, "r") as f:
         return json.load(f)
 
@@ -220,9 +229,9 @@ def retry_unpushed_commits(repo_path, config, interval=300):
 
 
 def main():
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
-    config = load_config(config_path)
-    setup_logging(config.get("log_file", "backup_agent.log"))
+    config = load_config()
+    log_file = os.path.join(get_base_dir(), config.get("log_file", "backup_agent.log"))
+    setup_logging(log_file)
 
     logging.info("=== Flying Probe Backup Agent starting ===")
 

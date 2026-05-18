@@ -54,11 +54,40 @@ echo    file_extensions    - file types to track
 echo ---------------------------------------------------------
 echo.
 
-REM ── 5. Offer to add to Windows startup ───────────────
+REM ── 5. Optional: build exe with PyInstaller ──────────
+set /p BUILDEXE="Build standalone .exe files with PyInstaller? (Y/N): "
+if /i "!BUILDEXE!"=="Y" (
+    pip install pyinstaller >nul 2>&1
+    echo Building backup_agent.exe ...
+    pyinstaller backup_agent.spec --distpath "%~dp0dist" --workpath "%~dp0build" --noconfirm
+    echo Building recover.exe ...
+    pyinstaller recover.spec --distpath "%~dp0dist" --workpath "%~dp0build" --noconfirm
+    if exist "%~dp0dist\backup_agent.exe" (
+        echo [OK] Exes built in the dist\ folder.
+        echo      Copy backup_agent.exe, recover.exe, and config.json
+        echo      to the target PC — no Python needed there.
+        set USE_EXE=1
+    ) else (
+        echo [WARN] Build may have failed. Check output above.
+        set USE_EXE=0
+    )
+) else (
+    echo [SKIP] Skipping PyInstaller build.
+    set USE_EXE=0
+)
+
+REM ── 6. Add to Windows startup ────────────────────────
+echo.
 set /p STARTUP="Add agent to Windows startup so it runs automatically? (Y/N): "
 if /i "!STARTUP!"=="Y" (
     set SCRIPT_DIR=%~dp0
-    set STARTUP_CMD=pythonw "!SCRIPT_DIR!backup_agent.py"
+    if "!USE_EXE!"=="1" (
+        REM Point startup to the compiled exe — no Python needed
+        set STARTUP_CMD="!SCRIPT_DIR!dist\backup_agent.exe"
+    ) else (
+        REM Point startup to pythonw so no console window appears
+        set STARTUP_CMD=pythonw "!SCRIPT_DIR!backup_agent.py"
+    )
     reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" ^
         /v "FlyingProbeBackupAgent" ^
         /t REG_SZ ^
@@ -71,7 +100,7 @@ if /i "!STARTUP!"=="Y" (
     echo        To start manually, run: start_agent.bat
 )
 
-REM ── 6. Create helper scripts ──────────────────────────
+REM ── 7. Create helper scripts ─────────────────────────
 echo.
 echo Creating helper scripts...
 
@@ -107,6 +136,6 @@ echo.
 echo Next steps:
 echo   1. Edit config.json with your folder paths and GitHub URL
 echo   2. On GitHub: create a new PRIVATE repo and copy its URL into config.json
-echo   3. Run start_agent.bat to test, then close and it will auto-start next login
+echo   3. Run start_agent.bat to test, or reboot to verify auto-start works
 echo.
 pause

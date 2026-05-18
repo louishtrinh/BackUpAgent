@@ -11,7 +11,16 @@ import sys
 from pathlib import Path
 
 
-def load_config(config_path="config.json"):
+def get_base_dir():
+    """Return the folder containing the exe (frozen) or the script (dev)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def load_config(config_path=None):
+    if config_path is None:
+        config_path = os.path.join(get_base_dir(), "config.json")
     with open(config_path, "r") as f:
         return json.load(f)
 
@@ -109,14 +118,14 @@ def search_files(all_files, query):
 
 
 def main():
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    config_path = os.path.join(get_base_dir(), "config.json")
 
     if not os.path.exists(config_path):
-        print("[ERROR] config.json not found. Run this from the BackupAgent folder.")
+        print("[ERROR] config.json not found next to the exe.")
         input("Press Enter to exit.")
         sys.exit(1)
 
-    config = load_config(config_path)
+    config = load_config()
     repo_path = config["repo_path"]
     recovered_root = config.get(
         "recovered_path",
