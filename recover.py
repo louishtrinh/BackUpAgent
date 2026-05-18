@@ -38,7 +38,7 @@ def run_git(args, cwd):
 def all_tracked_files(repo_path):
     """
     Return every file path (relative to repo root) that git has ever tracked.
-    Files are mirrored into the repo as e.g. FlyingProbePrograms/BoardA/dummy123.job
+    Files are mirrored into the repo as e.g. Watch Folder/BoardA/dummy123.job
     so the repo itself contains the full folder structure.
     """
     code, out, _ = run_git(
@@ -133,7 +133,7 @@ def main():
     repo_path = config["repo_path"]
     recovered_root = config.get(
         "recovered_path",
-        os.path.join(os.path.dirname(repo_path), "FlyingProbeRecovered"),
+        os.path.join(os.path.dirname(repo_path), "Data Recovery"),
     )
 
     print("=" * 62)

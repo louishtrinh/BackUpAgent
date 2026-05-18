@@ -95,10 +95,10 @@ def mirror_path(src_file, watch_root, repo_path):
     Given a file path inside watch_root, return where it should live inside repo_path.
 
     Example:
-      src_file   = C:/FlyingProbePrograms/BoardA/dummy123.job
-      watch_root = C:/FlyingProbePrograms
-      repo_path  = C:/FlyingProbeBackup
-      →  returns  C:/FlyingProbeBackup/FlyingProbePrograms/BoardA/dummy123.job
+      src_file   = C:/Watch Folder/BoardA/dummy123.job
+      watch_root = C:/Watch Folder
+      repo_path  = C:/Agent Database
+      →  returns  C:/Agent Database/Watch Folder/BoardA/dummy123.job
     """
     folder_name = Path(watch_root).name
     rel = os.path.relpath(src_file, watch_root)

@@ -46,9 +46,9 @@ echo  IMPORTANT: Edit config.json before running the agent!
 echo.
 echo  Things to set:
 echo    repo_path          - where git will store the backup
-echo                         (e.g. C:\FlyingProbeBackup)
+echo                         (e.g. C:\Agent Database)
 echo    watch_paths        - folder(s) containing your programs
-echo                         (e.g. C:\FlyingProbePrograms)
+echo                         (e.g. C:\Watch Folder)
 echo    github_remote_url  - your GitHub repo URL
 echo    file_extensions    - file types to track
 echo ---------------------------------------------------------
@@ -89,7 +89,7 @@ if /i "!STARTUP!"=="Y" (
         set STARTUP_CMD=pythonw "!SCRIPT_DIR!backup_agent.py"
     )
     reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" ^
-        /v "FlyingProbeBackupAgent" ^
+        /v "BackupAgent" ^
         /t REG_SZ ^
         /d "!STARTUP_CMD!" ^
         /f >nul
@@ -124,7 +124,7 @@ REM start_agent_hidden.bat  (runs in background with no window)
 REM remove_startup.bat
 (
     echo @echo off
-    echo reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "FlyingProbeBackupAgent" /f
+    echo reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v "BackupAgent" /f
     echo echo Removed from startup.
     echo pause
 ) > "%~dp0remove_startup.bat"

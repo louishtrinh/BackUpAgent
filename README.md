@@ -12,18 +12,18 @@ Someone saves dummy123.job
 backup_agent.py sees the change, waits 10 seconds
 (batches rapid saves into one commit)
         ↓
-Copies dummy123.job into the backup repo (mirrored folder structure)
+Copies dummy123.job into the Agent Database (mirrored folder structure)
         ↓
 git commit — "Auto-backup 2024-03-15 09:32
               Changed files:
-                - FlyingProbePrograms/dummy123.job"
+                - Watch Folder/dummy123.job"
         ↓
 Internet available?
   YES → push to GitHub immediately
   NO  → save locally, retry every 5 minutes
 ```
 
-The programs folder is **never modified** — the agent copies files out of it into a separate backup repo.
+The Watch Folder is **never modified** — the agent copies files out of it into the Agent Database.
 
 On first startup the agent takes a **full snapshot** of every existing file in the watched folders, so nothing is missed even before the first change.
 
@@ -31,16 +31,15 @@ On first startup the agent takes a **full snapshot** of every existing file in t
 
 ## What gets pushed to GitHub
 
-The full contents of every file are stored in the repo — not just diffs. GitHub holds a complete copy of your programs at every point in time. The folder structure is mirrored inside the repo:
+The full contents of every file are stored in the repo — not just diffs. GitHub holds a complete copy of your programs at every point in time. The folder structure is mirrored inside the Agent Database:
 
 ```
-C:\FlyingProbeBackup\
-  FlyingProbePrograms\        ← mirror of C:\FlyingProbePrograms
+C:\Agent Database\
+  Watch Folder\             ← mirror of C:\Watch Folder
     BoardA\
       dummy123.job
       boardXYZ.job
-  FlyingProbeData\            ← mirror of C:\FlyingProbeData (if configured)
-    fixtures\
+    Data\                   ← mirror of C:\Watch Folder\Data (if configured)
       fixture001.xml
 ```
 
@@ -55,7 +54,7 @@ You can back up as many folders as you like — just add them to `watch_paths` i
 - On startup: takes a full snapshot of all files in all watched folders
 - Watches for any file saves or new files
 - Waits 10 seconds after a change (batches rapid saves into one commit)
-- Copies changed files into the backup repo, commits with a message listing each one
+- Copies changed files into the Agent Database, commits with a message listing each one
 - Pushes to GitHub if internet is available, otherwise saves locally and retries every 5 minutes
 
 ### `recover.py` — run this only when you need to recover something
@@ -63,8 +62,8 @@ You can back up as many folders as you like — just add them to `watch_paths` i
 - You type part of a filename (e.g. `dummy123`)
 - It shows only the saves of that specific file, most recent first
 - You pick the version you want
-- The file is copied to `C:\FlyingProbeRecovered\` and Windows Explorer opens it automatically
-- **The programs folder is never touched**
+- The file is copied to `C:\Data Recovery\` and Windows Explorer opens it automatically
+- **The Watch Folder is never touched**
 
 ---
 
@@ -72,14 +71,13 @@ You can back up as many folders as you like — just add them to `watch_paths` i
 
 | Folder | What it is |
 |---|---|
-| `C:\FlyingProbePrograms\` | Your actual work — agent watches and copies from here |
-| `C:\FlyingProbeData\` | Supporting data folder — add to watch_paths to back up |
-| `C:\FlyingProbeBackup\` | The git vault — full mirrored copy + complete history |
-| `C:\FlyingProbeRecovered\` | Recovered files land here — safe to delete anytime |
-| `C:\BackupAgent\` | The scripts: backup_agent.py, recover.py, config.json |
+| `C:\Watch Folder\` | Your actual programs — agent watches and copies from here |
+| `C:\Agent Database\` | The git vault — full mirrored copy and complete history |
+| `C:\Data Recovery\` | Recovered files land here — safe to delete anytime |
+| `C:\Agent Core\` | The scripts: backup_agent.py, recover.py, config.json |
 
-`FlyingProbeBackup` is the bank vault. All history is locked in there safely.
-`FlyingProbeRecovered` is the teller window. When you need something, it hands you a copy. The vault never changes.
+`Agent Database` is the bank vault. All history is locked in there safely.
+`Data Recovery` is the teller window. When you need something, it hands you a copy. The vault never changes.
 
 ---
 
@@ -112,7 +110,7 @@ Say someone saved over `dummy123.job` by mistake instead of Save As:
      3.  2024-03-10 11:05
 
 4. Pick #2 (one above the broken version)
-5. File is saved to C:\FlyingProbeRecovered\dummy123_2024-03-14\
+5. File is saved to C:\Data Recovery\dummy123_2024-03-14\
 6. Windows Explorer opens that folder automatically
 7. Copy the file wherever you need it
 ```
@@ -131,15 +129,15 @@ Tick **"Add Python to PATH"** during install.
 Download from https://git-scm.com/download/win
 Use default options.
 
-**3. Copy this project** to `C:\BackupAgent\`
+**3. Copy this project** to `C:\Agent Core\`
 
 **4. Edit `config.json`**
 
 ```json
-"repo_path":          "C:/FlyingProbeBackup",
-"watch_paths":        ["C:/FlyingProbePrograms", "C:/FlyingProbeData"],
+"repo_path":          "C:/Agent Database",
+"watch_paths":        ["C:/Watch Folder"],
 "github_remote_url":  "https://github.com/YOUR_USERNAME/YOUR_REPO.git",
-"recovered_path":     "C:/FlyingProbeRecovered"
+"recovered_path":     "C:/Data Recovery"
 ```
 
 Add as many folders to `watch_paths` as you need.
@@ -161,11 +159,11 @@ The first push will prompt for your GitHub login — after that it remembers.
 
 | Key | What it does |
 |---|---|
-| `repo_path` | Where git stores the mirrored files and history |
+| `repo_path` | Where git stores the mirrored files and history (`C:/Agent Database`) |
 | `watch_paths` | Folder(s) to watch — all are mirrored into the repo |
 | `file_extensions` | Only back up files with these extensions |
 | `debounce_seconds` | How long to wait after a save before committing (default: 10) |
 | `github_remote_url` | Your GitHub repo URL |
-| `recovered_path` | Where recovered files are saved |
+| `recovered_path` | Where recovered files are saved (`C:/Data Recovery`) |
 | `commit_author_name` | Name shown on git commits |
 | `commit_author_email` | Email shown on git commits |

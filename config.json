@@ -1,8 +1,8 @@
 {
-    "repo_path": "C:/FlyingProbeBackup",
+    "repo_path": "C:/Agent Database",
     "watch_paths": [
-        "C:/FlyingProbePrograms",
-        "C:/FlyingProbeData"
+        "C:/Watch Folder",
+        "C:/Watch Folder/Data"
     ],
     "file_extensions": [".txt", ".csv", ".prg", ".job", ".xml", ".json", ".ini", ".cfg", ".drl", ".gbr"],
     "debounce_seconds": 10,
@@ -14,5 +14,5 @@
     "log_file": "backup_agent.log",
     "commit_author_name": "Backup Agent",
     "commit_author_email": "backup@company.local",
-    "recovered_path": "C:/FlyingProbeRecovered"
+    "recovered_path": "C:/Data Recovery"
 }
