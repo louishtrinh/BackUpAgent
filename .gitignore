@@ -1,0 +1,7 @@
+backup_agent.log
+*.log
+__pycache__/
+*.pyc
+start_agent.bat
+start_agent_hidden.bat
+remove_startup.bat

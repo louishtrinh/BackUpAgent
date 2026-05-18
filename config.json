@@ -1,0 +1,16 @@
+{
+    "repo_path": "C:/FlyingProbeBackup",
+    "watch_paths": [
+        "C:/FlyingProbePrograms"
+    ],
+    "file_extensions": [".txt", ".csv", ".prg", ".job", ".xml", ".json", ".ini", ".cfg", ".drl", ".gbr"],
+    "debounce_seconds": 10,
+    "git_remote": "origin",
+    "git_branch": "main",
+    "github_remote_url": "https://github.com/YOUR_USERNAME/YOUR_REPO.git",
+    "network_check_host": "github.com",
+    "network_check_port": 443,
+    "log_file": "backup_agent.log",
+    "commit_author_name": "Backup Agent",
+    "commit_author_email": "backup@company.local"
+}
