@@ -5,7 +5,7 @@
         "U:/APT-1600",
         "U:/APT-2600"
     ],
-    "file_extensions": [".swex", ".imgex"],
+    "file_extensions": [".swex", ".imgex", ".swe6"],
     "debounce_seconds": 10,
     "github_enabled": false,
     "git_remote": "origin",
