@@ -66,7 +66,7 @@ def run_git(args, cwd, env=None):
 
 
 def ensure_repo_initialized(config):
-    """Initialize the local git repo and wire up configured remotes."""
+    """Initialize the local git repo and GitHub remote if enabled."""
     repo_path = config["repo_path"]
     os.makedirs(repo_path, exist_ok=True)
 
@@ -77,41 +77,20 @@ def ensure_repo_initialized(config):
         run_git(["config", "user.name", config["commit_author_name"]], cwd=repo_path)
         run_git(["config", "user.email", config["commit_author_email"]], cwd=repo_path)
 
-    # GitHub remote
     if config.get("github_enabled", False):
         _set_remote(repo_path, config["git_remote"], config["github_remote_url"])
         logging.info("GitHub sync enabled -> %s", config["github_remote_url"])
     else:
         logging.info("GitHub sync disabled.")
 
-    # Server (share drive) remote
     server_folder = config.get("server_folder", "")
     if server_folder:
-        ensure_server_repo(server_folder)
-        _set_remote(repo_path, "server", server_folder)
-        logging.info("Server sync enabled -> %s", server_folder)
+        logging.info("Server folder configured -> %s", server_folder)
     else:
         logging.info("Server folder not configured — local only.")
 
 
-def server_path_to_url(path):
-    """
-    Convert a Windows path (local or UNC) to a git file:// URL.
-    Git on Windows is more reliable with file:// than raw UNC paths,
-    especially when the path contains spaces.
-      \\SERVER\Share\Repo.git  →  file:////SERVER/Share/Repo.git
-      D:\Repo.git              →  file:///D:/Repo.git
-    """
-    fwd = path.replace("\\", "/")
-    if fwd.startswith("//"):
-        return "file:" + fwd       # UNC: file:////SERVER/share/...
-    return "file:///" + fwd        # Local: file:///D:/...
-
-
 def _set_remote(repo_path, name, url):
-    # Convert server paths to file:// URLs for better git compatibility
-    if not url.startswith(("http://", "https://", "git@", "file://")):
-        url = server_path_to_url(url)
     code, _, _ = run_git(["remote", "get-url", name], cwd=repo_path)
     if code != 0:
         run_git(["remote", "add", name, url], cwd=repo_path)
@@ -119,20 +98,29 @@ def _set_remote(repo_path, name, url):
         run_git(["remote", "set-url", name, url], cwd=repo_path)
 
 
-def ensure_server_repo(server_folder):
+def sync_to_server(repo_path, server_folder, retries=3):
     """
-    Initialize a bare git repo on the share drive if one doesn't exist yet.
-    A bare repo is the standard way to share a git repo across multiple PCs —
-    any PC on the network can push to and pull from it like a private GitHub.
+    Mirror the local Agent Database to the server folder using robocopy.
+    robocopy only copies files that changed, handles network shares reliably,
+    and requires only write access — no git ownership needed on the server.
+    The server copy is a full git repo so recover.py can read it directly.
+    robocopy exit codes 0-7 are all success (bit flags for what was copied).
     """
-    if os.path.isdir(os.path.join(server_folder, "HEAD")):
-        return  # already a bare repo
-    os.makedirs(server_folder, exist_ok=True)
-    code, _, err = run_git(["init", "--bare"], cwd=server_folder)
-    if code == 0:
-        logging.info("Initialized bare repo on server: %s", server_folder)
-    else:
-        logging.error("Failed to initialize server repo: %s", err)
+    logging.info("Syncing to server ...")
+    for attempt in range(retries):
+        result = subprocess.run(
+            ["robocopy", repo_path, server_folder, "/MIR", "/Z", "/W:2", "/R:2", "/NP", "/NFL", "/NDL"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode < 8:
+            logging.info("Server sync successful.")
+            return
+        wait = 2 ** attempt
+        logging.debug("Server sync attempt %d failed (exit %d), retrying in %ds", attempt + 1, result.returncode, wait)
+        time.sleep(wait)
+    logging.warning("Server sync failed after %d attempts (robocopy exit %d): %s",
+                    retries, result.returncode, result.stderr.strip())
 
 
 def mirror_path(src_file, watch_root, repo_path):
@@ -250,40 +238,41 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
 
 
 def push_all(repo_path, config):
-    """Push to every configured destination after a commit."""
+    """Sync to every configured destination after a commit."""
     branch = config["git_branch"]
 
     if config.get("github_enabled", False):
         if is_network_available(config["network_check_host"], config["network_check_port"]):
-            _push(repo_path, config["git_remote"], branch, "GitHub")
+            _github_push(repo_path, config["git_remote"], branch)
         else:
             logging.info("GitHub: network not available — will retry later.")
 
-    if config.get("server_folder", ""):
-        if os.path.isdir(config["server_folder"]):
-            _push(repo_path, "server", branch, "Server")
+    server_folder = config.get("server_folder", "")
+    if server_folder:
+        if os.path.isdir(server_folder):
+            sync_to_server(repo_path, server_folder)
         else:
-            logging.warning("Server folder not reachable: %s", config["server_folder"])
+            logging.warning("Server folder not reachable: %s", server_folder)
 
 
-def _push(repo_path, remote, branch, label, retries=4):
-    """Push to one remote with exponential backoff."""
-    logging.info("Pushing to %s ...", label)
+def _github_push(repo_path, remote, branch, retries=4):
+    """Push to GitHub with exponential backoff."""
+    logging.info("Pushing to GitHub ...")
     last_err = ""
     for attempt in range(retries):
         code, _, err = run_git(["push", "-u", remote, branch], cwd=repo_path)
         if code == 0:
-            logging.info("%s push successful.", label)
+            logging.info("GitHub push successful.")
             return
         last_err = err
         wait = 2 ** attempt
-        logging.debug("%s push attempt %d failed, retrying in %ds: %s", label, attempt + 1, wait, err)
+        logging.debug("GitHub push attempt %d failed, retrying in %ds: %s", attempt + 1, wait, err)
         time.sleep(wait)
-    logging.warning("%s push failed after %d attempts — git said: %s", label, retries, last_err)
+    logging.warning("GitHub push failed after %d attempts — git said: %s", retries, last_err)
 
 
-def retry_unpushed_commits(repo_path, config, interval=300):
-    """Background thread: periodically retry any pushes that failed earlier."""
+def retry_sync(repo_path, config, interval=300):
+    """Background thread: periodically retry any syncs that failed earlier."""
     while True:
         time.sleep(interval)
         branch = config["git_branch"]
@@ -294,13 +283,11 @@ def retry_unpushed_commits(repo_path, config, interval=300):
             if code == 0 and out:
                 logging.info("Found commits not yet on GitHub, retrying...")
                 if is_network_available(config["network_check_host"], config["network_check_port"]):
-                    _push(repo_path, remote, branch, "GitHub")
+                    _github_push(repo_path, remote, branch)
 
-        if config.get("server_folder", "") and os.path.isdir(config["server_folder"]):
-            code, out, _ = run_git(["log", f"server/{branch}..HEAD", "--oneline"], cwd=repo_path)
-            if code == 0 and out:
-                logging.info("Found commits not yet on server, retrying...")
-                _push(repo_path, "server", branch, "Server")
+        server_folder = config.get("server_folder", "")
+        if server_folder and os.path.isdir(server_folder):
+            sync_to_server(repo_path, server_folder)
 
 
 class ProgramChangeHandler(FileSystemEventHandler):
@@ -391,7 +378,7 @@ def main():
     logging.info("Agent is running. Press Ctrl+C to stop.")
 
     retry_thread = threading.Thread(
-        target=retry_unpushed_commits,
+        target=retry_sync,
         args=(config["repo_path"], config),
         daemon=True,
     )
