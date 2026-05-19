@@ -1,16 +1,17 @@
 {
     "repo_path": "C:/Agent Database",
     "watch_paths": [
-        "C:/Watch Folder",
-        "C:/Watch Folder/Data"
+        "C:/Watch Folder"
     ],
     "file_extensions": [".txt", ".csv", ".prg", ".job", ".xml", ".json", ".ini", ".cfg", ".drl", ".gbr"],
     "debounce_seconds": 10,
+    "github_enabled": false,
     "git_remote": "origin",
     "git_branch": "main",
     "github_remote_url": "https://github.com/YOUR_USERNAME/YOUR_REPO.git",
     "network_check_host": "github.com",
     "network_check_port": 443,
+    "server_folder": "\\\\SERVER\\ShareDrive\\Agent Database.git",
     "log_file": "backup_agent.log",
     "commit_author_name": "Backup Agent",
     "commit_author_email": "backup@company.local",

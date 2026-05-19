@@ -1,7 +1,7 @@
 """
 Flying Probe Backup Agent
 Watches folders for changes, mirrors files into a local git repo,
-and pushes to GitHub when the network is available.
+and syncs to a server share drive and/or GitHub when available.
 """
 
 import json
@@ -66,6 +66,7 @@ def run_git(args, cwd, env=None):
 
 
 def ensure_repo_initialized(config):
+    """Initialize the local git repo and wire up configured remotes."""
     repo_path = config["repo_path"]
     os.makedirs(repo_path, exist_ok=True)
 
@@ -76,30 +77,48 @@ def ensure_repo_initialized(config):
         run_git(["config", "user.name", config["commit_author_name"]], cwd=repo_path)
         run_git(["config", "user.email", config["commit_author_email"]], cwd=repo_path)
 
-    code, _, _ = run_git(["remote", "get-url", config["git_remote"]], cwd=repo_path)
-    if code != 0:
-        run_git(
-            ["remote", "add", config["git_remote"], config["github_remote_url"]],
-            cwd=repo_path,
-        )
-        logging.info("Added remote '%s' -> %s", config["git_remote"], config["github_remote_url"])
+    # GitHub remote
+    if config.get("github_enabled", False):
+        _set_remote(repo_path, config["git_remote"], config["github_remote_url"])
+        logging.info("GitHub sync enabled -> %s", config["github_remote_url"])
     else:
-        run_git(
-            ["remote", "set-url", config["git_remote"], config["github_remote_url"]],
-            cwd=repo_path,
-        )
+        logging.info("GitHub sync disabled.")
+
+    # Server (share drive) remote
+    server_folder = config.get("server_folder", "")
+    if server_folder:
+        ensure_server_repo(server_folder)
+        _set_remote(repo_path, "server", server_folder)
+        logging.info("Server sync enabled -> %s", server_folder)
+    else:
+        logging.info("Server folder not configured — local only.")
+
+
+def _set_remote(repo_path, name, url):
+    code, _, _ = run_git(["remote", "get-url", name], cwd=repo_path)
+    if code != 0:
+        run_git(["remote", "add", name, url], cwd=repo_path)
+    else:
+        run_git(["remote", "set-url", name, url], cwd=repo_path)
+
+
+def ensure_server_repo(server_folder):
+    """
+    Initialize a bare git repo on the share drive if one doesn't exist yet.
+    A bare repo is the standard way to share a git repo across multiple PCs —
+    any PC on the network can push to and pull from it like a private GitHub.
+    """
+    if os.path.isdir(os.path.join(server_folder, "HEAD")):
+        return  # already a bare repo
+    os.makedirs(server_folder, exist_ok=True)
+    code, _, err = run_git(["init", "--bare"], cwd=server_folder)
+    if code == 0:
+        logging.info("Initialized bare repo on server: %s", server_folder)
+    else:
+        logging.error("Failed to initialize server repo: %s", err)
 
 
 def mirror_path(src_file, watch_root, repo_path):
-    """
-    Given a file path inside watch_root, return where it should live inside repo_path.
-
-    Example:
-      src_file   = C:/Watch Folder/BoardA/dummy123.job
-      watch_root = C:/Watch Folder
-      repo_path  = C:/Agent Database
-      →  returns  C:/Agent Database/Watch Folder/BoardA/dummy123.job
-    """
     folder_name = Path(watch_root).name
     rel = os.path.relpath(src_file, watch_root)
     return os.path.join(repo_path, folder_name, rel)
@@ -136,7 +155,6 @@ def initial_snapshot(config):
         return
 
     extensions = {ext.lower() for ext in config.get("file_extensions", [])}
-    copied = []
 
     for watch_root in config["watch_paths"]:
         if not os.path.isdir(watch_root):
@@ -146,12 +164,7 @@ def initial_snapshot(config):
                 if extensions and Path(fname).suffix.lower() not in extensions:
                     continue
                 src = os.path.join(dirpath, fname)
-                rel = copy_into_repo(src, watch_root, repo_path)
-                copied.append(rel)
-
-    if not copied:
-        logging.info("No files found for initial snapshot.")
-        return
+                copy_into_repo(src, watch_root, repo_path)
 
     run_git(["add", "--all"], cwd=repo_path)
     code, diff, _ = run_git(["diff", "--cached", "--name-only"], cwd=repo_path)
@@ -165,20 +178,17 @@ def initial_snapshot(config):
     code, _, err = run_git(["commit", "-m", msg], cwd=repo_path)
     if code == 0:
         logging.info("Initial snapshot committed: %d file(s).", len(diff.splitlines()))
+        push_all(repo_path, config)
     else:
         logging.error("Initial snapshot commit failed: %s", err)
 
 
 def stage_and_commit(repo_path, changed_files, watch_root_map, config):
-    """
-    Copy changed files into the repo mirror, stage, and commit.
-    watch_root_map: {src_file: watch_root} so we know which root each file belongs to.
-    """
     staged_rel = []
 
     for src_file in changed_files:
         if not os.path.isfile(src_file):
-            continue  # deleted or temp file
+            continue
         watch_root = watch_root_map.get(src_file)
         if not watch_root:
             continue
@@ -208,30 +218,61 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
     code, _, err = run_git(["commit", "-m", commit_msg], cwd=repo_path)
     if code == 0:
         logging.info("Committed %d file(s):\n%s", len(diff_output.splitlines()), file_list)
+        push_all(repo_path, config)
     else:
         logging.error("Commit failed: %s", err)
-        return
-
-    if is_network_available(config["network_check_host"], config["network_check_port"]):
-        push_to_remote(repo_path, config)
-    else:
-        logging.info("Network not available — commit saved locally, will push later.")
 
 
-def push_to_remote(repo_path, config, retries=4):
-    """Push with exponential backoff — only logs a warning if all attempts fail."""
-    remote = config["git_remote"]
+def push_all(repo_path, config):
+    """Push to every configured destination after a commit."""
     branch = config["git_branch"]
-    logging.info("Pushing to %s/%s ...", remote, branch)
+
+    if config.get("github_enabled", False):
+        if is_network_available(config["network_check_host"], config["network_check_port"]):
+            _push(repo_path, config["git_remote"], branch, "GitHub")
+        else:
+            logging.info("GitHub: network not available — will retry later.")
+
+    if config.get("server_folder", ""):
+        if os.path.isdir(config["server_folder"]):
+            _push(repo_path, "server", branch, "Server")
+        else:
+            logging.warning("Server folder not reachable: %s", config["server_folder"])
+
+
+def _push(repo_path, remote, branch, label, retries=4):
+    """Push to one remote with exponential backoff."""
+    logging.info("Pushing to %s ...", label)
     for attempt in range(retries):
         code, _, err = run_git(["push", "-u", remote, branch], cwd=repo_path)
         if code == 0:
-            logging.info("Push successful.")
+            logging.info("%s push successful.", label)
             return
-        wait = 2 ** attempt  # 1s, 2s, 4s, 8s
-        logging.debug("Push attempt %d failed, retrying in %ds: %s", attempt + 1, wait, err)
+        wait = 2 ** attempt
+        logging.debug("%s push attempt %d failed, retrying in %ds: %s", label, attempt + 1, wait, err)
         time.sleep(wait)
-    logging.warning("Push failed after %d attempts — commit is saved locally and will retry later.", retries)
+    logging.warning("%s push failed after %d attempts — will retry later.", label, retries)
+
+
+def retry_unpushed_commits(repo_path, config, interval=300):
+    """Background thread: periodically retry any pushes that failed earlier."""
+    while True:
+        time.sleep(interval)
+        branch = config["git_branch"]
+
+        if config.get("github_enabled", False):
+            remote = config["git_remote"]
+            code, out, _ = run_git(["log", f"{remote}/{branch}..HEAD", "--oneline"], cwd=repo_path)
+            if code == 0 and out:
+                logging.info("Found commits not yet on GitHub, retrying...")
+                if is_network_available(config["network_check_host"], config["network_check_port"]):
+                    _push(repo_path, remote, branch, "GitHub")
+
+        if config.get("server_folder", "") and os.path.isdir(config["server_folder"]):
+            code, out, _ = run_git(["log", f"server/{branch}..HEAD", "--oneline"], cwd=repo_path)
+            if code == 0 and out:
+                logging.info("Found commits not yet on server, retrying...")
+                _push(repo_path, "server", branch, "Server")
 
 
 class ProgramChangeHandler(FileSystemEventHandler):
@@ -258,7 +299,6 @@ class ProgramChangeHandler(FileSystemEventHandler):
         with self.pending_lock:
             self.pending_files.add(src_path)
             self.watch_root_map[src_path] = self.watch_root
-            # Reset debounce timer so rapid saves are batched into one commit
             if self.debounce_timer_ref[0] is not None:
                 self.debounce_timer_ref[0].cancel()
             timer = threading.Timer(self.debounce_seconds, self._flush_pending)
@@ -291,20 +331,6 @@ class ProgramChangeHandler(FileSystemEventHandler):
         if not event.is_directory:
             logging.debug("Renamed: %s -> %s", event.src_path, event.dest_path)
             self._schedule_commit(event.dest_path)
-
-
-def retry_unpushed_commits(repo_path, config, interval=300):
-    """Background thread: periodically push commits that failed to push earlier."""
-    while True:
-        time.sleep(interval)
-        code, out, _ = run_git(
-            ["log", f"{config['git_remote']}/{config['git_branch']}..HEAD", "--oneline"],
-            cwd=repo_path,
-        )
-        if code == 0 and out:
-            logging.info("Found unpushed commits, retrying push...")
-            if is_network_available(config["network_check_host"], config["network_check_port"]):
-                push_to_remote(repo_path, config)
 
 
 def main():
