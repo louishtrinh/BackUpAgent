@@ -115,10 +115,52 @@ def pick(prompt, items, display_fn):
         print("       Invalid choice, try again.")
 
 
-def search_files(all_files, query):
-    """Return files whose name contains the query string (case-insensitive)."""
-    q = query.lower()
-    return [f for f in all_files if q in Path(f).name.lower()]
+def last_saved(repo_path, file_path):
+    """Return the timestamp of the most recent commit that touched this file."""
+    code, out, _ = run_git(
+        ["log", "--format=%ci", "-1", "--", file_path],
+        cwd=repo_path,
+    )
+    return out[:16] if code == 0 and out else ""
+
+
+def pick_grouped(prompt, matches, repo_path):
+    """
+    Display files grouped by their parent folder with the last-saved timestamp.
+    Returns the chosen file path, or None if cancelled.
+
+    Example:
+      Machine A\
+         1.  ProgramA.job          2024-03-15 14:22
+         2.  ProgramB.job          2024-03-14 09:15
+      Machine B\
+         3.  ProgramC.job          2024-03-13 11:00
+    """
+    # Group by parent folder (everything above the filename)
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for f in matches:
+        folder = str(Path(f).parent)
+        groups[folder].append(f)
+
+    numbered = []  # flat ordered list for selection
+    print()
+    for folder in sorted(groups):
+        print(f"  {folder}\\")
+        for f in sorted(groups[folder], key=lambda x: Path(x).name.lower()):
+            ts = last_saved(repo_path, f)
+            idx = len(numbered) + 1
+            numbered.append(f)
+            print(f"    {idx:>3}.  {Path(f).name:<40}  {ts}")
+        print()
+
+    while True:
+        raw = input(f"{prompt} (1-{len(numbered)}, or 0 to cancel): ").strip()
+        if raw == "0":
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(numbered):
+            return numbered[int(raw) - 1]
+        print("       Invalid choice, try again.")
 
 
 def main():
@@ -167,10 +209,11 @@ def main():
 
     if len(matches) == 1:
         chosen_file = matches[0]
-        print(f"\n  Found: {chosen_file}")
+        ts = last_saved(repo_path, chosen_file)
+        print(f"\n  Found: {Path(chosen_file).parent}\\{Path(chosen_file).name}  ({ts})")
     else:
-        print(f"\n  Found {len(matches)} matching file(s). Pick one:\n")
-        chosen_file = pick("Enter file number", matches, lambda f: Path(f).name)
+        print(f"\n  Found {len(matches)} matching file(s). Pick one:")
+        chosen_file = pick_grouped("Enter file number", matches, repo_path)
         if chosen_file is None:
             print("Cancelled.")
             input("Press Enter to exit.")
