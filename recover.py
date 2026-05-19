@@ -37,15 +37,11 @@ def run_git(args, cwd):
 
 def all_tracked_files(repo_path):
     """
-    Return every file path (relative to repo root) that git has ever tracked.
-    Files are mirrored into the repo as e.g. Watch Folder/BoardA/dummy123.job
-    so the repo itself contains the full folder structure.
+    Return every file path (relative to repo root) currently tracked by git.
+    Uses git ls-files which is simpler and more reliable than log filtering.
     """
-    code, out, _ = run_git(
-        ["log", "--all", "--diff-filter=A", "--name-only", "--format="],
-        cwd=repo_path,
-    )
-    if code != 0:
+    code, out, _ = run_git(["ls-files"], cwd=repo_path)
+    if code != 0 or not out:
         return []
     seen = {}
     for line in out.splitlines():
