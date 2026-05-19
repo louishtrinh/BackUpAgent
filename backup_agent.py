@@ -343,6 +343,10 @@ class ProgramChangeHandler(FileSystemEventHandler):
             logging.info("Detected %d change(s), committing...", len(files))
             stage_and_commit(self.repo_path, files, root_map, self.config)
 
+    def on_deleted(self, event):
+        if not event.is_directory and self._is_relevant(event.src_path):
+            logging.warning("FILE DELETED: %s", event.src_path)
+
     def on_created(self, event):
         if not event.is_directory:
             logging.debug("New file: %s", event.src_path)
