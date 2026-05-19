@@ -263,17 +263,17 @@ class ProgramChangeHandler(FileSystemEventHandler):
 
     def on_created(self, event):
         if not event.is_directory:
-            logging.info("New file: %s", event.src_path)
+            logging.debug("New file: %s", event.src_path)
             self._schedule_commit(event.src_path)
 
     def on_modified(self, event):
         if not event.is_directory:
-            logging.info("Modified: %s", event.src_path)
+            logging.debug("Modified: %s", event.src_path)
             self._schedule_commit(event.src_path)
 
     def on_moved(self, event):
         if not event.is_directory:
-            logging.info("Renamed: %s -> %s", event.src_path, event.dest_path)
+            logging.debug("Renamed: %s -> %s", event.src_path, event.dest_path)
             self._schedule_commit(event.dest_path)
 
 
