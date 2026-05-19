@@ -105,12 +105,23 @@ def mirror_path(src_file, watch_root, repo_path):
     return os.path.join(repo_path, folder_name, rel)
 
 
-def copy_into_repo(src_file, watch_root, repo_path):
-    """Copy src_file into its mirrored location inside the repo. Returns the repo-relative path."""
+def copy_into_repo(src_file, watch_root, repo_path, retries=5, delay=0.5):
+    """
+    Copy src_file into its mirrored location inside the repo.
+    Retries with a short delay because the file may still be locked by the
+    application that just saved it when the first filesystem event fires.
+    """
     dest = mirror_path(src_file, watch_root, repo_path)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    shutil.copy2(src_file, dest)
-    return os.path.relpath(dest, repo_path)
+    last_err = None
+    for attempt in range(retries):
+        try:
+            shutil.copy2(src_file, dest)
+            return os.path.relpath(dest, repo_path)
+        except OSError as e:
+            last_err = e
+            time.sleep(delay)
+    raise last_err
 
 
 def initial_snapshot(config):
@@ -207,15 +218,20 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
         logging.info("Network not available — commit saved locally, will push later.")
 
 
-def push_to_remote(repo_path, config):
+def push_to_remote(repo_path, config, retries=4):
+    """Push with exponential backoff — only logs a warning if all attempts fail."""
     remote = config["git_remote"]
     branch = config["git_branch"]
     logging.info("Pushing to %s/%s ...", remote, branch)
-    code, _, err = run_git(["push", "-u", remote, branch], cwd=repo_path)
-    if code == 0:
-        logging.info("Push successful.")
-    else:
-        logging.warning("Push failed (will retry on next commit): %s", err)
+    for attempt in range(retries):
+        code, _, err = run_git(["push", "-u", remote, branch], cwd=repo_path)
+        if code == 0:
+            logging.info("Push successful.")
+            return
+        wait = 2 ** attempt  # 1s, 2s, 4s, 8s
+        logging.debug("Push attempt %d failed, retrying in %ds: %s", attempt + 1, wait, err)
+        time.sleep(wait)
+    logging.warning("Push failed after %d attempts — commit is saved locally and will retry later.", retries)
 
 
 class ProgramChangeHandler(FileSystemEventHandler):
