@@ -204,83 +204,77 @@ def main():
     elif server_folder:
         print("\n  Server folder not reachable — using local history.")
 
-    # ── Step 1: find the file by name ────────────────────────────
-    print("\nType part of the filename to search (e.g.  dummy123  or  .job)")
-    query = input("Search: ").strip()
-    if not query:
-        print("Cancelled.")
-        input("Press Enter to exit.")
-        return
+    print("\nType part of the filename to search, or press Enter to exit.")
 
-    print("\nSearching backup history...")
-    all_files = all_tracked_files(repo_path)
-    matches = search_files(all_files, query)
+    while True:
+        # ── Step 1: search ───────────────────────────────────────
+        print("\n" + "-" * 62)
+        query = input("Search (or Enter to quit): ").strip()
+        if not query:
+            print("Goodbye.")
+            break
 
-    if not matches:
-        print(f"\n  No files matching '{query}' found in backup history.")
-        input("Press Enter to exit.")
-        return
+        print("\nSearching backup history...")
+        all_files = all_tracked_files(repo_path)
+        matches = search_files(all_files, query)
 
-    if len(matches) == 1:
-        chosen_file = matches[0]
-        ts = last_saved(repo_path, chosen_file)
-        print(f"\n  Found: {Path(chosen_file).parent}\\{Path(chosen_file).name}  ({ts})")
-    else:
-        print(f"\n  Found {len(matches)} matching file(s). Pick one:")
-        chosen_file = pick_grouped("Enter file number", matches, repo_path)
-        if chosen_file is None:
-            print("Cancelled.")
-            input("Press Enter to exit.")
-            return
+        if not matches:
+            print(f"\n  No files matching '{query}' found in backup history.")
+            continue
 
-    # ── Step 2: show this file's save history ────────────────────
-    print(f"\nLoading save history for:  {Path(chosen_file).name}\n")
-    commits = commits_for_file(repo_path, chosen_file)
+        if len(matches) == 1:
+            chosen_file = matches[0]
+            ts = last_saved(repo_path, chosen_file)
+            print(f"\n  Found: {Path(chosen_file).parent}\\{Path(chosen_file).name}  ({ts})")
+        else:
+            print(f"\n  Found {len(matches)} matching file(s). Pick one:")
+            chosen_file = pick_grouped("Enter file number", matches, repo_path)
+            if chosen_file is None:
+                continue
 
-    if not commits:
-        print("  No backup history found for this file.")
-        input("Press Enter to exit.")
-        return
+        # ── Step 2: version history ──────────────────────────────
+        print(f"\nLoading save history for:  {Path(chosen_file).name}\n")
+        commits = commits_for_file(repo_path, chosen_file)
 
-    print(f"  {len(commits)} saved version(s) found — most recent is at the top.")
-    print("  If the latest is the broken one, pick the version just below it.\n")
+        if not commits:
+            print("  No backup history found for this file.")
+            continue
 
-    chosen_commit = pick(
-        "Which version to recover",
-        commits,
-        lambda c: f"{c[1]}{c[2]}",
-    )
-    if chosen_commit is None:
-        print("Cancelled.")
-        input("Press Enter to exit.")
-        return
+        print(f"  {len(commits)} saved version(s) found — most recent is at the top.")
+        print("  If the latest is the broken one, pick the version just below it.\n")
 
-    commit_hash, commit_time, _ = chosen_commit
+        chosen_commit = pick(
+            "Which version to recover",
+            commits,
+            lambda c: f"{c[1]}{c[2]}",
+        )
+        if chosen_commit is None:
+            continue
 
-    # ── Step 3: extract to Recovered folder ──────────────────────
-    safe_name = Path(chosen_file).stem
-    safe_time = commit_time.replace(":", "-").replace(" ", "_")
-    output_dir = os.path.join(recovered_root, f"{safe_name}_{safe_time}_{commit_hash}")
+        commit_hash, commit_time, _ = chosen_commit
 
-    print(f"\nExtracting to:\n  {output_dir}\n")
-    dest = extract_file(repo_path, commit_hash, chosen_file, output_dir)
+        # ── Step 3: extract ──────────────────────────────────────
+        safe_name = Path(chosen_file).stem
+        safe_time = commit_time.replace(":", "-").replace(" ", "_")
+        output_dir = os.path.join(recovered_root, f"{safe_name}_{safe_time}_{commit_hash}")
 
-    if dest:
-        print(f"  [OK]  {Path(chosen_file).name}  saved.")
-        print()
-        print("Done! Copy the file from the folder below into your programs folder")
-        print("when you are ready. Your current programs were NOT changed.")
-        print(f"\n  {output_dir}")
+        print(f"\nExtracting to:\n  {output_dir}\n")
+        dest = extract_file(repo_path, commit_hash, chosen_file, output_dir)
 
-        try:
-            subprocess.Popen(["explorer", output_dir])
-        except Exception:
-            pass
-    else:
-        print("Recovery failed — see error above.")
+        if dest:
+            print(f"  [OK]  {Path(chosen_file).name}  saved.")
+            print()
+            print("Done! Copy the file from the folder below into your programs folder.")
+            print("Your current programs were NOT changed.")
+            print(f"\n  {output_dir}")
+            try:
+                subprocess.Popen(["explorer", output_dir])
+            except Exception:
+                pass
+        else:
+            print("Recovery failed — see error above.")
 
-    print()
-    input("Press Enter to exit.")
+    input("\nPress Enter to close.")
 
 
 if __name__ == "__main__":
