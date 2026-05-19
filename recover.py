@@ -233,15 +233,20 @@ def main():
                 continue
 
         # ── Step 2: version history ──────────────────────────────
-        print(f"\nLoading save history for:  {Path(chosen_file).name}\n")
+        print()
+        print("=" * 62)
+        print("  STEP 2 — Pick which saved version to recover")
+        print(f"  File: {Path(chosen_file).name}")
+        print("=" * 62)
+        print("\n  Loading save history...")
         commits = commits_for_file(repo_path, chosen_file)
 
         if not commits:
             print("  No backup history found for this file.")
             continue
 
-        print(f"  {len(commits)} saved version(s) found — most recent is at the top.")
-        print("  If the latest is the broken one, pick the version just below it.\n")
+        print(f"\n  {len(commits)} saved version(s) found — most recent at the top.")
+        print("  If the latest is the broken one, pick the version just below it.")
 
         chosen_commit = pick(
             "Which version to recover",
