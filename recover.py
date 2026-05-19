@@ -115,6 +115,12 @@ def pick(prompt, items, display_fn):
         print("       Invalid choice, try again.")
 
 
+def search_files(all_files, query):
+    """Return files whose name contains the query string (case-insensitive)."""
+    q = query.lower()
+    return [f for f in all_files if q in Path(f).name.lower()]
+
+
 def last_saved(repo_path, file_path):
     """Return the timestamp of the most recent commit that touched this file."""
     code, out, _ = run_git(
