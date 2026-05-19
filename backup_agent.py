@@ -143,17 +143,14 @@ def copy_into_repo(src_file, watch_root, repo_path, retries=5, delay=0.5):
     raise last_err
 
 
-def initial_snapshot(config):
+def startup_snapshot(config):
     """
-    On first startup, copy every existing file from all watch_paths into the repo
-    and make a single 'Initial snapshot' commit. Skips if repo already has commits.
+    Runs on every startup. Copies all current files from watch_paths into the
+    repo and commits anything that changed while the agent was offline.
+    On first run this becomes the initial snapshot; on subsequent runs it
+    catches up any missed changes.
     """
     repo_path = config["repo_path"]
-    code, out, _ = run_git(["log", "--oneline", "-1"], cwd=repo_path)
-    if code == 0 and out:
-        logging.info("Repo already has commits — skipping initial snapshot.")
-        return
-
     extensions = {ext.lower() for ext in config.get("file_extensions", [])}
 
     for watch_root in config["watch_paths"]:
@@ -164,23 +161,35 @@ def initial_snapshot(config):
                 if extensions and Path(fname).suffix.lower() not in extensions:
                     continue
                 src = os.path.join(dirpath, fname)
-                copy_into_repo(src, watch_root, repo_path)
+                try:
+                    copy_into_repo(src, watch_root, repo_path)
+                except Exception as e:
+                    logging.warning("Startup: could not copy %s: %s", src, e)
 
     run_git(["add", "--all"], cwd=repo_path)
     code, diff, _ = run_git(["diff", "--cached", "--name-only"], cwd=repo_path)
     if not diff:
-        logging.info("Initial snapshot: nothing to commit.")
+        logging.info("Startup check: no changes missed while offline.")
         return
+
+    # First ever commit vs catch-up commit
+    code_log, out_log, _ = run_git(["log", "--oneline", "-1"], cwd=repo_path)
+    is_first = not (code_log == 0 and out_log)
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     file_list = "\n".join(f"  - {f}" for f in sorted(diff.splitlines()))
-    msg = f"Initial snapshot {timestamp}\n\nFiles:\n{file_list}"
+    if is_first:
+        msg = f"Initial snapshot {timestamp}\n\nFiles:\n{file_list}"
+    else:
+        msg = f"Catch-up {timestamp}\n\nChanged while agent was offline:\n{file_list}"
+
     code, _, err = run_git(["commit", "-m", msg], cwd=repo_path)
     if code == 0:
-        logging.info("Initial snapshot committed: %d file(s).", len(diff.splitlines()))
+        label = "Initial snapshot" if is_first else "Catch-up"
+        logging.info("%s committed: %d file(s):\n%s", label, len(diff.splitlines()), file_list)
         push_all(repo_path, config)
     else:
-        logging.error("Initial snapshot commit failed: %s", err)
+        logging.error("Startup commit failed: %s", err)
 
 
 def stage_and_commit(repo_path, changed_files, watch_root_map, config):
@@ -341,7 +350,7 @@ def main():
     logging.info("=== Flying Probe Backup Agent starting ===")
 
     ensure_repo_initialized(config)
-    initial_snapshot(config)
+    startup_snapshot(config)
 
     pending_lock = threading.Lock()
     pending_files = set()

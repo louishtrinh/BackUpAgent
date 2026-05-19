@@ -190,6 +190,21 @@ def main():
         input("Press Enter to exit.")
         sys.exit(1)
 
+    # ── Sync from server so history is up to date ─────────────────
+    server_folder = config.get("server_folder", "")
+    if server_folder and os.path.isdir(server_folder):
+        print("\nSyncing latest history from server...")
+        code, _, err = run_git(
+            ["pull", "server", config.get("git_branch", "main"), "--rebase"],
+            cwd=repo_path,
+        )
+        if code == 0:
+            print("  Server sync OK.")
+        else:
+            print(f"  Could not sync from server (using local history): {err}")
+    elif server_folder:
+        print("\n  Server folder not reachable — using local history.")
+
     # ── Step 1: find the file by name ────────────────────────────
     print("\nType part of the filename to search (e.g.  dummy123  or  .job)")
     query = input("Search: ").strip()
