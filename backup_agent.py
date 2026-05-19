@@ -94,7 +94,24 @@ def ensure_repo_initialized(config):
         logging.info("Server folder not configured — local only.")
 
 
+def server_path_to_url(path):
+    """
+    Convert a Windows path (local or UNC) to a git file:// URL.
+    Git on Windows is more reliable with file:// than raw UNC paths,
+    especially when the path contains spaces.
+      \\SERVER\Share\Repo.git  →  file:////SERVER/Share/Repo.git
+      D:\Repo.git              →  file:///D:/Repo.git
+    """
+    fwd = path.replace("\\", "/")
+    if fwd.startswith("//"):
+        return "file:" + fwd       # UNC: file:////SERVER/share/...
+    return "file:///" + fwd        # Local: file:///D:/...
+
+
 def _set_remote(repo_path, name, url):
+    # Convert server paths to file:// URLs for better git compatibility
+    if not url.startswith(("http://", "https://", "git@", "file://")):
+        url = server_path_to_url(url)
     code, _, _ = run_git(["remote", "get-url", name], cwd=repo_path)
     if code != 0:
         run_git(["remote", "add", name, url], cwd=repo_path)
@@ -252,15 +269,17 @@ def push_all(repo_path, config):
 def _push(repo_path, remote, branch, label, retries=4):
     """Push to one remote with exponential backoff."""
     logging.info("Pushing to %s ...", label)
+    last_err = ""
     for attempt in range(retries):
         code, _, err = run_git(["push", "-u", remote, branch], cwd=repo_path)
         if code == 0:
             logging.info("%s push successful.", label)
             return
+        last_err = err
         wait = 2 ** attempt
         logging.debug("%s push attempt %d failed, retrying in %ds: %s", label, attempt + 1, wait, err)
         time.sleep(wait)
-    logging.warning("%s push failed after %d attempts — will retry later.", label, retries)
+    logging.warning("%s push failed after %d attempts — git said: %s", label, retries, last_err)
 
 
 def retry_unpushed_commits(repo_path, config, interval=300):
