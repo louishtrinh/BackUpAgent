@@ -151,7 +151,7 @@ def pick_grouped(prompt, matches, repo_path):
             ts = last_saved(repo_path, f)
             idx = len(numbered) + 1
             numbered.append(f)
-            print(f"    {idx:>3}.  {Path(f).name:<40}  {ts}")
+            print(f"    {idx:>3}.  {Path(f).name:<40}  {ts}  [{idx}]")
         print()
 
     while True:
