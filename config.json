@@ -13,7 +13,7 @@
     "github_remote_url": "https://github.com/Loct317054/FlyingProbeBackUp.git",
     "network_check_host": "github.com",
     "network_check_port": 443,
-    "server_folder": "",
+    "server_folder": "S:/PUBLIC/TE/Flying Probe/Program Repository",
     "log_file": "backup_agent.log",
     "commit_author_name": "Backup Agent FlyingProbe",
     "commit_author_email": "loct@fabrinet.com",
