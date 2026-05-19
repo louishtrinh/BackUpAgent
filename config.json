@@ -1,19 +1,21 @@
 {
-    "repo_path": "C:/Agent Database",
+    "repo_path": "D:/BackUpAgent/Database",
     "watch_paths": [
-        "C:/Watch Folder"
+        "U:/APT-1400",
+        "U:/APT-1600",
+        "U:/APT-2600"
     ],
-    "file_extensions": [".txt", ".csv", ".prg", ".job", ".xml", ".json", ".ini", ".cfg", ".drl", ".gbr"],
+    "file_extensions": [".swex", ".imgex"],
     "debounce_seconds": 10,
     "github_enabled": false,
     "git_remote": "origin",
     "git_branch": "main",
-    "github_remote_url": "https://github.com/YOUR_USERNAME/YOUR_REPO.git",
+    "github_remote_url": "https://github.com/Loct317054/FlyingProbeBackUp.git",
     "network_check_host": "github.com",
     "network_check_port": 443,
-    "server_folder": "\\\\SERVER\\ShareDrive\\Agent Database.git",
+    "server_folder": "",
     "log_file": "backup_agent.log",
-    "commit_author_name": "Backup Agent",
-    "commit_author_email": "backup@company.local",
-    "recovered_path": "C:/Data Recovery"
+    "commit_author_name": "Backup Agent FlyingProbe",
+    "commit_author_email": "loct@fabrinet.com",
+    "recovered_path": "D:/BackUpAgent/DataRecovery"
 }
