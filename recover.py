@@ -63,7 +63,7 @@ def commits_for_file(repo_path, file_path, max_commits=100):
     touched this specific file — most recent first.
     """
     code, out, _ = run_git(
-        ["log", f"--max-count={max_commits}", "--format=%h|%ci|%s", "--follow", "--", file_path],
+        ["log", f"--max-count={max_commits}", "--format=%h|%ci|%s", "--", file_path],
         cwd=repo_path,
     )
     if code != 0 or not out:
@@ -121,13 +121,26 @@ def search_files(all_files, query):
     return [f for f in all_files if q in Path(f).name.lower()]
 
 
-def last_saved(repo_path, file_path):
-    """Return the timestamp of the most recent commit that touched this file."""
+def last_saved_batch(repo_path, file_paths):
+    """
+    Return {file_path: timestamp} for all files in one git call instead of
+    one call per file. Much faster when there are many search results.
+    """
     code, out, _ = run_git(
-        ["log", "--format=%ci", "-1", "--", file_path],
+        ["log", "--format=COMMIT %ci", "--name-only", "--diff-filter=AM"],
         cwd=repo_path,
     )
-    return out[:16] if code == 0 and out else ""
+    timestamps = {}
+    current_ts = ""
+    if code == 0 and out:
+        for line in out.splitlines():
+            if line.startswith("COMMIT "):
+                current_ts = line[7:23]
+            elif line.strip():
+                f = line.strip()
+                if f not in timestamps:
+                    timestamps[f] = current_ts
+    return {f: timestamps.get(f, "") for f in file_paths}
 
 
 def pick_grouped(prompt, matches, repo_path):
@@ -149,12 +162,14 @@ def pick_grouped(prompt, matches, repo_path):
         folder = str(Path(f).parent)
         groups[folder].append(f)
 
+    timestamps = last_saved_batch(repo_path, matches)
+
     numbered = []  # flat ordered list for selection
     print()
     for folder in sorted(groups):
         print(f"  {folder}\\")
         for f in sorted(groups[folder], key=lambda x: Path(x).name.lower()):
-            ts = last_saved(repo_path, f)
+            ts = timestamps.get(f, "")
             idx = len(numbered) + 1
             numbered.append(f)
             print(f"    {idx:>3}.  {Path(f).name:<40}  {ts}  [{idx}]")
