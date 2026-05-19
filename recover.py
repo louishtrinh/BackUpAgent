@@ -26,8 +26,10 @@ def load_config(config_path=None):
 
 
 def run_git(args, cwd):
+    # -c safe.directory=* bypasses git's ownership check which blocks
+    # network shares and folders owned by a different user
     result = subprocess.run(
-        ["git"] + args,
+        ["git", "-c", "safe.directory=*"] + args,
         cwd=cwd,
         capture_output=True,
         text=True,
@@ -40,8 +42,10 @@ def all_tracked_files(repo_path):
     Return every file path (relative to repo root) currently tracked by git.
     Uses git ls-files which is simpler and more reliable than log filtering.
     """
-    code, out, _ = run_git(["ls-files"], cwd=repo_path)
+    code, out, err = run_git(["ls-files"], cwd=repo_path)
     if code != 0 or not out:
+        if err:
+            print(f"  [git error] {err}")
         return []
     seen = {}
     for line in out.splitlines():
