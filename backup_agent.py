@@ -108,19 +108,30 @@ def sync_to_server(repo_path, server_folder, retries=3):
     """
     logging.info("Syncing to server ...")
     for attempt in range(retries):
-        result = subprocess.run(
-            ["robocopy", repo_path, server_folder, "/MIR", "/Z", "/W:2", "/R:2", "/NP", "/NFL", "/NDL"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode < 8:
-            logging.info("Server sync successful.")
-            return
-        wait = 2 ** attempt
-        logging.debug("Server sync attempt %d failed (exit %d), retrying in %ds", attempt + 1, result.returncode, wait)
-        time.sleep(wait)
-    logging.warning("Server sync failed after %d attempts (robocopy exit %d): %s",
-                    retries, result.returncode, result.stderr.strip())
+        try:
+            result = subprocess.run(
+                ["robocopy", repo_path, server_folder,
+                 "/MIR",       # mirror: copy new/changed, remove deleted
+                 "/W:1",       # wait 1s between retries per file
+                 "/R:1",       # retry once per file on error
+                 "/NP",        # no progress percentage (cleaner logs)
+                 "/NFL",       # no file list in output
+                 "/NDL",       # no directory list in output
+                 "/MT:4"],     # 4 parallel threads for faster copy
+                capture_output=True,
+                text=True,
+                timeout=120,   # give up after 2 minutes
+            )
+            if result.returncode < 8:
+                logging.info("Server sync successful.")
+                return
+        except subprocess.TimeoutExpired:
+            logging.warning("Server sync timed out on attempt %d.", attempt + 1)
+        except Exception as e:
+            logging.warning("Server sync error on attempt %d: %s", attempt + 1, e)
+        if attempt < retries - 1:
+            time.sleep(2 ** attempt)
+    logging.warning("Server sync failed after %d attempts.", retries)
 
 
 def mirror_path(src_file, watch_root, repo_path):
