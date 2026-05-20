@@ -239,7 +239,7 @@ def main():
 
         if len(matches) == 1:
             chosen_file = matches[0]
-            ts = last_saved(repo_path, chosen_file)
+            ts = last_saved_batch(repo_path, [chosen_file]).get(chosen_file, "")
             print(f"\n  Found: {Path(chosen_file).parent}\\{Path(chosen_file).name}  ({ts})")
         else:
             print(f"\n  Found {len(matches)} matching file(s). Pick one:")
