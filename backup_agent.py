@@ -145,14 +145,27 @@ def copy_into_repo(src_file, watch_root, repo_path, retries=5, delay=0.5):
     Copy src_file into its mirrored location inside the repo.
     Retries with a short delay because the file may still be locked by the
     application that just saved it when the first filesystem event fires.
+    Returns (rel_path, size_tag) where size_tag is [new], [size unchanged],
+    or [+N bytes]/[-N bytes] based on byte-level size comparison.
     """
     dest = mirror_path(src_file, watch_root, repo_path)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+    src_size = os.path.getsize(src_file)
+    if os.path.exists(dest):
+        delta = src_size - os.path.getsize(dest)
+        if delta == 0:
+            size_tag = "[size unchanged]"
+        else:
+            size_tag = f"[{'+' if delta > 0 else ''}{delta} bytes]"
+    else:
+        size_tag = "[new]"
+
     last_err = None
     for attempt in range(retries):
         try:
             shutil.copy2(src_file, dest)
-            return os.path.relpath(dest, repo_path)
+            return os.path.relpath(dest, repo_path), size_tag
         except OSError as e:
             last_err = e
             time.sleep(delay)
@@ -209,7 +222,7 @@ def startup_snapshot(config):
 
 
 def stage_and_commit(repo_path, changed_files, watch_root_map, config):
-    staged_rel = []
+    staged_tags = {}  # rel_path -> size_tag
 
     for src_file in changed_files:
         if not os.path.isfile(src_file):
@@ -218,16 +231,16 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
         if not watch_root:
             continue
         try:
-            rel = copy_into_repo(src_file, watch_root, repo_path)
+            rel, size_tag = copy_into_repo(src_file, watch_root, repo_path)
             code, _, err = run_git(["add", rel], cwd=repo_path)
             if code == 0:
-                staged_rel.append(rel)
+                staged_tags[rel] = size_tag
             else:
                 logging.warning("Could not stage %s: %s", rel, err)
         except Exception as e:
             logging.warning("Could not copy %s into repo: %s", src_file, e)
 
-    if not staged_rel:
+    if not staged_tags:
         logging.info("Nothing to stage.")
         return
 
@@ -237,12 +250,15 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
         return
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    file_list = "\n".join(f"  - {f}" for f in sorted(diff_output.splitlines()))
+    file_list = "\n".join(
+        f"  - {f}  {staged_tags.get(f, '')}"
+        for f in sorted(diff_output.splitlines())
+    )
     commit_msg = f"Auto-backup {timestamp}\n\nChanged files:\n{file_list}"
 
     code, _, err = run_git(["commit", "-m", commit_msg], cwd=repo_path)
     if code == 0:
-        logging.info("Committed %d file(s):\n%s", len(diff_output.splitlines()), file_list)
+        logging.info("Committed %d file(s):\n%s", len(staged_tags), file_list)
         push_all(repo_path, config)
     else:
         logging.error("Commit failed: %s", err)

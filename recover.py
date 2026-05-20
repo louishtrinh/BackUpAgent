@@ -6,6 +6,7 @@ The original programs folder is NEVER touched.
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,21 +60,37 @@ def all_tracked_files(repo_path):
 
 def commits_for_file(repo_path, file_path, max_commits=100):
     """
-    Return list of (short_hash, timestamp, label) for every commit that
-    touched this specific file — most recent first.
+    Return list of (short_hash, timestamp, size_tag, label) for every commit
+    that touched this specific file — most recent first.
+    size_tag is parsed from the commit body: [new], [size unchanged], [+N bytes], etc.
     """
+    filename = Path(file_path).name.lower()
     code, out, _ = run_git(
-        ["log", f"--max-count={max_commits}", "--format=%h|%ci|%s", "--", file_path],
+        ["log", f"--max-count={max_commits}", "--format=##COMMIT##%h|%ci%n%b", "--", file_path],
         cwd=repo_path,
     )
     if code != 0 or not out:
         return []
     commits = []
-    for i, line in enumerate(out.splitlines()):
-        parts = line.split("|", 2)
-        if len(parts) == 3:
-            label = "  <-- MOST RECENT (may be the broken one)" if i == 0 else ""
-            commits.append((parts[0], parts[1][:19], label))
+    for block in out.split("##COMMIT##"):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        parts = lines[0].split("|", 1)
+        if len(parts) != 2:
+            continue
+        short_hash = parts[0].strip()
+        timestamp = parts[1].strip()[:19]
+        size_tag = ""
+        for line in lines[1:]:
+            if filename in line.lower():
+                m = re.search(r'\[([^\]]+)\]', line)
+                if m:
+                    size_tag = f"[{m.group(1)}]"
+                break
+        label = "  <-- MOST RECENT (may be the broken one)" if not commits else ""
+        commits.append((short_hash, timestamp, size_tag, label))
     return commits
 
 
@@ -266,12 +283,12 @@ def main():
         chosen_commit = pick(
             "Which version to recover",
             commits,
-            lambda c: f"{c[1]}{c[2]}",
+            lambda c: f"{c[1]}  {c[2]}{c[3]}",
         )
         if chosen_commit is None:
             continue
 
-        commit_hash, commit_time, _ = chosen_commit
+        commit_hash, commit_time, _, __ = chosen_commit
 
         # ── Step 3: extract ──────────────────────────────────────
         safe_name = Path(chosen_file).stem
