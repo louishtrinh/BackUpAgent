@@ -103,18 +103,53 @@ def extract_file(repo_path, commit_hash, file_path, output_dir):
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, Path(file_path).name)
 
-    # git show reads from the object database — it never writes to the work tree
-    code, content, err = run_git(
-        ["show", f"{commit_hash}:{file_path}"],
+    # Run without text=True so binary files are preserved exactly.
+    result = subprocess.run(
+        ["git", "-c", "safe.directory=*", "show", f"{commit_hash}:{file_path}"],
         cwd=repo_path,
+        capture_output=True,
     )
-    if code != 0:
-        print(f"\n  [ERROR] Could not read {file_path} from commit {commit_hash}: {err}")
+    if result.returncode != 0:
+        print(f"\n  [ERROR] Could not read {file_path} from commit {commit_hash}: "
+              f"{result.stderr.decode(errors='replace')}")
         return None
 
     with open(dest, "wb") as f:
-        f.write(content.encode("utf-8", errors="replace"))
+        f.write(result.stdout)
     return dest
+
+
+def extract_folder(repo_path, commit_hash, folder_path, output_dir):
+    """
+    Restore every file under folder_path at commit_hash into output_dir,
+    preserving the subfolder structure within the program folder.
+    Returns output_dir on success, None on failure.
+    """
+    code, out, _ = run_git(
+        ["ls-tree", "-r", "--name-only", commit_hash, folder_path],
+        cwd=repo_path,
+    )
+    if code != 0 or not out:
+        print(f"\n  [ERROR] No files found under {folder_path} at commit {commit_hash}.")
+        return None
+
+    ok = 0
+    for file_rel in out.splitlines():
+        file_rel = file_rel.strip()
+        if not file_rel:
+            continue
+        # Preserve sub-structure inside the program folder.
+        sub = os.path.relpath(file_rel.replace("/", os.sep),
+                              folder_path.replace("/", os.sep))
+        dest_subdir = os.path.join(output_dir, os.path.dirname(sub))
+        if extract_file(repo_path, commit_hash, file_rel, dest_subdir):
+            ok += 1
+
+    if ok == 0:
+        print("  [ERROR] No files could be extracted.")
+        return None
+    print(f"  [OK]  {ok} file(s) restored.")
+    return output_dir
 
 
 def pick(prompt, items, display_fn):
@@ -158,6 +193,89 @@ def last_saved_batch(repo_path, file_paths):
                 if f not in timestamps:
                     timestamps[f] = current_ts
     return {f: timestamps.get(f, "") for f in file_paths}
+
+
+def all_tracked_programs(repo_path, folder_configs):
+    """
+    Return sorted list of program folder paths (relative to repo root) for
+    every folder_watch_path entry.  folder_configs is the list from config.json.
+    """
+    code, out, _ = run_git(["ls-files"], cwd=repo_path)
+    if code != 0 or not out:
+        return []
+    folder_name_to_depth = {Path(fc["path"]).name: fc["depth"] for fc in folder_configs}
+    programs = set()
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = Path(line).parts
+        if parts and parts[0] in folder_name_to_depth:
+            depth = folder_name_to_depth[parts[0]]
+            if len(parts) > depth:
+                programs.add("/".join(parts[:depth + 1]))
+    return sorted(programs, key=lambda p: Path(p).name.lower())
+
+
+def search_programs(programs, query):
+    """Return programs whose folder name contains the query string (case-insensitive)."""
+    q = query.lower()
+    return [p for p in programs if q in Path(p).name.lower()]
+
+
+def commits_for_folder(repo_path, folder_path, max_commits=100):
+    """
+    Return list of (short_hash, timestamp, summary, label) for every commit
+    that touched any file under folder_path — most recent first.
+    summary: e.g. "3 files  (2 modified, 1 new)"
+    """
+    code, out, _ = run_git(
+        ["log", f"--max-count={max_commits}", "--format=##COMMIT##%h|%ci%n%b",
+         "--", f"{folder_path}/"],
+        cwd=repo_path,
+    )
+    if code != 0 or not out:
+        return []
+
+    folder_prefix = folder_path.replace("\\", "/").lower() + "/"
+    commits = []
+    for block in out.split("##COMMIT##"):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.splitlines()
+        parts = lines[0].split("|", 1)
+        if len(parts) != 2:
+            continue
+        short_hash = parts[0].strip()
+        timestamp = parts[1].strip()[:19]
+
+        new_count = modified_count = unchanged_count = 0
+        for line in lines[1:]:
+            if folder_prefix in line.lower():
+                if "[new]" in line:
+                    new_count += 1
+                elif "[size unchanged]" in line:
+                    unchanged_count += 1
+                elif re.search(r'\[[\+\-]\d+ bytes\]', line):
+                    modified_count += 1
+
+        total = new_count + modified_count + unchanged_count
+        parts_summary = []
+        if new_count:
+            parts_summary.append(f"{new_count} new")
+        if modified_count:
+            parts_summary.append(f"{modified_count} modified")
+        if unchanged_count:
+            parts_summary.append(f"{unchanged_count} size unchanged")
+        summary = f"{total} file{'s' if total != 1 else ''}"
+        if parts_summary:
+            summary += f"  ({', '.join(parts_summary)})"
+
+        label = "  <-- MOST RECENT" if not commits else ""
+        commits.append((short_hash, timestamp, summary, label))
+
+    return commits
 
 
 def pick_grouped(prompt, matches, repo_path):
@@ -238,6 +356,8 @@ def main():
 
     print("\nType part of the filename to search, or press Enter to exit.")
 
+    folder_configs = config.get("folder_watch_paths", [])
+
     while True:
         # ── Step 1: search ───────────────────────────────────────
         print("\n" + "-" * 62)
@@ -247,38 +367,92 @@ def main():
             break
 
         print("\nSearching backup history...")
-        all_files = all_tracked_files(repo_path)
-        matches = search_files(all_files, query)
 
-        if not matches:
-            print(f"\n  No files matching '{query}' found in backup history.")
+        # Search both individual files and program folders.
+        all_files = all_tracked_files(repo_path)
+        file_matches = search_files(all_files, query)
+
+        program_matches = []
+        if folder_configs:
+            programs = all_tracked_programs(repo_path, folder_configs)
+            program_matches = search_programs(programs, query)
+
+        if not file_matches and not program_matches:
+            print(f"\n  No files or program folders matching '{query}' found in backup history.")
             continue
 
-        if len(matches) == 1:
-            chosen_file = matches[0]
-            ts = last_saved_batch(repo_path, [chosen_file]).get(chosen_file, "")
-            print(f"\n  Found: {Path(chosen_file).parent}\\{Path(chosen_file).name}  ({ts})")
+        # Build a unified numbered list: programs first, then files.
+        # Each entry: ("folder", path) or ("file", path)
+        combined = [("folder", p) for p in program_matches] + [("file", p) for p in file_matches]
+
+        if len(combined) == 1:
+            result_type, chosen_path = combined[0]
+            if result_type == "folder":
+                print(f"\n  Found program folder: {chosen_path}")
+            else:
+                ts = last_saved_batch(repo_path, [chosen_path]).get(chosen_path, "")
+                print(f"\n  Found: {Path(chosen_path).parent}\\{Path(chosen_path).name}  ({ts})")
         else:
-            print(f"\n  Found {len(matches)} matching file(s). Pick one:")
-            chosen_file = pick_grouped("Enter file number", matches, repo_path)
-            if chosen_file is None:
+            print(f"\n  Found {len(combined)} result(s). Pick one:\n")
+            numbered = []
+            if program_matches:
+                print("  PROGRAM FOLDERS (full folder rollback):")
+                for p in program_matches:
+                    idx = len(numbered) + 1
+                    numbered.append(("folder", p))
+                    print(f"    {idx:>3}.  [FOLDER]  {p}")
+                print()
+            if file_matches:
+                ts_map = last_saved_batch(repo_path, file_matches)
+                print("  FILES:")
+                from collections import defaultdict
+                groups = defaultdict(list)
+                for f in file_matches:
+                    groups[str(Path(f).parent)].append(f)
+                for folder in sorted(groups):
+                    print(f"    {folder}\\")
+                    for f in sorted(groups[folder], key=lambda x: Path(x).name.lower()):
+                        ts = ts_map.get(f, "")
+                        idx = len(numbered) + 1
+                        numbered.append(("file", f))
+                        print(f"      {idx:>3}.  {Path(f).name:<40}  {ts}")
+                print()
+
+            while True:
+                raw = input(f"Enter number (1-{len(numbered)}, or 0 to cancel): ").strip()
+                if raw == "0":
+                    break
+                if raw.isdigit() and 1 <= int(raw) <= len(numbered):
+                    result_type, chosen_path = numbered[int(raw) - 1]
+                    break
+                print("       Invalid choice, try again.")
+            else:
+                continue
+            if raw == "0":
                 continue
 
         # ── Step 2: version history ──────────────────────────────
         print()
         print("=" * 62)
         print("  STEP 2 — Pick which saved version to recover")
-        print(f"  File: {Path(chosen_file).name}")
+        print(f"  {'Program folder' if result_type == 'folder' else 'File'}: {Path(chosen_path).name}")
         print("=" * 62)
         print("\n  Loading save history...")
-        commits = commits_for_file(repo_path, chosen_file)
+
+        if result_type == "folder":
+            commits = commits_for_folder(repo_path, chosen_path)
+        else:
+            commits = commits_for_file(repo_path, chosen_path)
 
         if not commits:
-            print("  No backup history found for this file.")
+            print("  No backup history found.")
             continue
 
         print(f"\n  {len(commits)} saved version(s) found — most recent at the top.")
-        print("  If the latest is the broken one, pick the version just below it.")
+        if result_type == "folder":
+            print("  Rolling back restores the ENTIRE program folder.")
+        else:
+            print("  If the latest is the broken one, pick the version just below it.")
 
         chosen_commit = pick(
             "Which version to recover",
@@ -288,20 +462,26 @@ def main():
         if chosen_commit is None:
             continue
 
-        commit_hash, commit_time, _, __ = chosen_commit
+        commit_hash, commit_time = chosen_commit[0], chosen_commit[1]
 
         # ── Step 3: extract ──────────────────────────────────────
-        safe_name = Path(chosen_file).stem
+        safe_name = Path(chosen_path).name
         safe_time = commit_time.replace(":", "-").replace(" ", "_")
         output_dir = os.path.join(recovered_root, f"{safe_name}_{safe_time}_{commit_hash}")
 
         print(f"\nExtracting to:\n  {output_dir}\n")
-        dest = extract_file(repo_path, commit_hash, chosen_file, output_dir)
 
-        if dest:
-            print(f"  [OK]  {Path(chosen_file).name}  saved.")
+        if result_type == "folder":
+            result_path = extract_folder(repo_path, commit_hash, chosen_path, output_dir)
+        else:
+            result_path = extract_file(repo_path, commit_hash, chosen_path, output_dir)
+
+        if result_path:
             print()
-            print("Done! Copy the file from the folder below into your programs folder.")
+            if result_type == "folder":
+                print("Done! The full program folder has been restored to the location below.")
+            else:
+                print("Done! Copy the file from the folder below into your programs folder.")
             print("Your current programs were NOT changed.")
             print(f"\n  {output_dir}")
             try:

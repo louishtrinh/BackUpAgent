@@ -5,6 +5,10 @@
         "U:/APT-1600",
         "U:/APT-2600"
     ],
+    "folder_watch_paths": [
+        {"path": "U:/5DX",  "depth": 1},
+        {"path": "U:/ICT",  "depth": 1}
+    ],
     "file_extensions": [".swex", ".imgex", ".swe6"],
     "debounce_seconds": 10,
     "github_enabled": false,

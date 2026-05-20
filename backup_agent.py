@@ -182,12 +182,16 @@ def startup_snapshot(config):
     repo_path = config["repo_path"]
     extensions = {ext.lower() for ext in config.get("file_extensions", [])}
 
-    for watch_root in config["watch_paths"]:
+    folder_watch_paths = {e["path"] for e in config.get("folder_watch_paths", [])}
+    all_roots = list(config.get("watch_paths", [])) + list(folder_watch_paths)
+
+    for watch_root in all_roots:
+        is_folder_mode = watch_root in folder_watch_paths
         if not os.path.isdir(watch_root):
             continue
         for dirpath, _, filenames in os.walk(watch_root):
             for fname in filenames:
-                if extensions and Path(fname).suffix.lower() not in extensions:
+                if not is_folder_mode and extensions and Path(fname).suffix.lower() not in extensions:
                     continue
                 src = os.path.join(dirpath, fname)
                 try:
@@ -221,8 +225,9 @@ def startup_snapshot(config):
         logging.error("Startup commit failed: %s", err)
 
 
-def stage_and_commit(repo_path, changed_files, watch_root_map, config):
-    staged_tags = {}  # rel_path -> size_tag
+def stage_and_commit(repo_path, changed_files, watch_root_map, watch_depth_map, config):
+    staged_tags = {}       # rel_path -> size_tag
+    rel_to_watch_root = {} # rel_path -> watch_root
 
     for src_file in changed_files:
         if not os.path.isfile(src_file):
@@ -235,6 +240,7 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
             code, _, err = run_git(["add", rel], cwd=repo_path)
             if code == 0:
                 staged_tags[rel] = size_tag
+                rel_to_watch_root[rel] = watch_root
             else:
                 logging.warning("Could not stage %s: %s", rel, err)
         except Exception as e:
@@ -250,15 +256,40 @@ def stage_and_commit(repo_path, changed_files, watch_root_map, config):
         return
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    file_list = "\n".join(
-        f"  - {f}  {staged_tags.get(f, '')}"
-        for f in sorted(diff_output.splitlines())
-    )
-    commit_msg = f"Auto-backup {timestamp}\n\nChanged files:\n{file_list}"
+
+    # Separate file-mode and folder-mode changes for the commit message.
+    file_lines = []
+    program_groups = {}  # program_folder -> [(rel, size_tag)]
+
+    for rel in sorted(diff_output.splitlines()):
+        size_tag = staged_tags.get(rel, "")
+        watch_root = rel_to_watch_root.get(rel)
+        depth = watch_depth_map.get(watch_root, 0) if watch_root else 0
+
+        if depth > 0:
+            parts = Path(rel).parts
+            prog_folder = "/".join(parts[:depth + 1]) if len(parts) > depth else str(Path(rel).parent)
+            program_groups.setdefault(prog_folder, []).append((rel, size_tag))
+        else:
+            file_lines.append(f"  - {rel}  {size_tag}")
+
+    sections = []
+    if file_lines:
+        sections.append("Changed files:\n" + "\n".join(file_lines))
+    if program_groups:
+        prog_lines = []
+        for prog_folder in sorted(program_groups):
+            files = program_groups[prog_folder]
+            prog_lines.append(f"  {prog_folder}  ({len(files)} file{'s' if len(files) != 1 else ''})")
+            for rel, tag in sorted(files):
+                prog_lines.append(f"    - {rel}  {tag}")
+        sections.append("Changed programs:\n" + "\n".join(prog_lines))
+
+    commit_msg = f"Auto-backup {timestamp}\n\n" + "\n\n".join(sections)
 
     code, _, err = run_git(["commit", "-m", commit_msg], cwd=repo_path)
     if code == 0:
-        logging.info("Committed %d file(s):\n%s", len(staged_tags), file_list)
+        logging.info("Committed %d file(s).", len(staged_tags))
         push_all(repo_path, config)
     else:
         logging.error("Commit failed: %s", err)
@@ -318,10 +349,11 @@ def retry_sync(repo_path, config, interval=300):
 
 
 class ProgramChangeHandler(FileSystemEventHandler):
-    def __init__(self, config, watch_root, pending_lock, pending_files, watch_root_map, debounce_timer_ref):
+    def __init__(self, config, watch_root, watch_depth_map, pending_lock, pending_files, watch_root_map, debounce_timer_ref):
         super().__init__()
         self.config = config
         self.watch_root = watch_root
+        self.watch_depth_map = watch_depth_map
         self.repo_path = config["repo_path"]
         self.extensions = {ext.lower() for ext in config.get("file_extensions", [])}
         self.debounce_seconds = config.get("debounce_seconds", 10)
@@ -331,6 +363,9 @@ class ProgramChangeHandler(FileSystemEventHandler):
         self.debounce_timer_ref = debounce_timer_ref
 
     def _is_relevant(self, path):
+        # Folder-mode watch paths capture everything inside the program folder.
+        if self.watch_depth_map.get(self.watch_root, 0) > 0:
+            return True
         if not self.extensions:
             return True
         return Path(path).suffix.lower() in self.extensions
@@ -357,7 +392,7 @@ class ProgramChangeHandler(FileSystemEventHandler):
             self.debounce_timer_ref[0] = None
         if files:
             logging.info("Detected %d change(s), committing...", len(files))
-            stage_and_commit(self.repo_path, files, root_map, self.config)
+            stage_and_commit(self.repo_path, files, root_map, self.watch_depth_map, self.config)
 
     def on_deleted(self, event):
         if not event.is_directory and self._is_relevant(event.src_path):
@@ -394,16 +429,27 @@ def main():
     watch_root_map = {}
     debounce_timer_ref = [None]
 
+    # Build a map of watch_root -> folder depth (0 = file mode, N = folder mode).
+    watch_depth_map = {p: 0 for p in config.get("watch_paths", [])}
+    for entry in config.get("folder_watch_paths", []):
+        watch_depth_map[entry["path"]] = entry["depth"]
+
     observer = Observer()
-    for watch_root in config["watch_paths"]:
+
+    all_watch_roots = list(config.get("watch_paths", [])) + [
+        e["path"] for e in config.get("folder_watch_paths", [])
+    ]
+    for watch_root in all_watch_roots:
         if not os.path.isdir(watch_root):
             logging.warning("Watch path does not exist, skipping: %s", watch_root)
             continue
         handler = ProgramChangeHandler(
-            config, watch_root, pending_lock, pending_files, watch_root_map, debounce_timer_ref
+            config, watch_root, watch_depth_map,
+            pending_lock, pending_files, watch_root_map, debounce_timer_ref,
         )
         observer.schedule(handler, watch_root, recursive=True)
-        logging.info("Watching: %s", watch_root)
+        mode = "folder" if watch_depth_map.get(watch_root, 0) > 0 else "file"
+        logging.info("Watching (%s mode): %s", mode, watch_root)
 
     observer.start()
     logging.info("Agent is running. Press Ctrl+C to stop.")
