@@ -167,3 +167,4 @@ The first push will prompt for your GitHub login — after that it remembers.
 | `recovered_path` | Where recovered files are saved (`C:/Data Recovery`) |
 | `commit_author_name` | Name shown on git commits |
 | `commit_author_email` | Email shown on git commits |
+# Environment test 2026-05-20
